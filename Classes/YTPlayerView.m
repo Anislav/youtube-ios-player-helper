@@ -51,6 +51,7 @@ NSString static *const kYTPlayerCallbackOnError = @"onError";
 NSString static *const kYTPlayerCallbackOnYouTubeIframeAPIReady = @"onYouTubeIframeAPIReady";
 
 NSString static *const kYTPlayerEmbedUrlRegexPattern = @"^http(s)://(www.)youtube.com/embed/(.*)$";
+NSString static *const kYTPlayerAdUrlRegexPattern = @"^http(s)://pubads.g.doubleclick.net/pagead/conversion/";
 
 @interface YTPlayerView()
 
@@ -95,7 +96,6 @@ NSString static *const kYTPlayerEmbedUrlRegexPattern = @"^http(s)://(www.)youtub
 }
 
 - (void)pauseVideo {
-  [self notifyDelegateOfYouTubeCallbackUrl:[NSURL URLWithString:[NSString stringWithFormat:@"ytplayer://onStateChange?data=%@", kYTPlayerStatePausedCode]]];
   [self stringFromEvaluatingJavaScript:@"player.pauseVideo();"];
 }
 
@@ -370,25 +370,17 @@ NSString static *const kYTPlayerEmbedUrlRegexPattern = @"^http(s)://(www.)youtub
 #pragma mark - Helper methods
 
 - (NSArray *)availableQualityLevels {
-  NSString *returnValue =
-      [self stringFromEvaluatingJavaScript:@"player.getAvailableQualityLevels();"];
-
-  NSData *availableQualityLevelsData = [returnValue dataUsingEncoding:NSUTF8StringEncoding];
-  NSError *jsonDeserializationError;
-
-  NSArray *rawQualityValues = [NSJSONSerialization JSONObjectWithData:availableQualityLevelsData
-                                                              options:kNilOptions
-                                                                error:&jsonDeserializationError];
-  if (jsonDeserializationError) {
-    return nil;
-  }
-
-  NSMutableArray *levels = [[NSMutableArray alloc] init];
-  for (NSString *rawQualityValue in rawQualityValues) {
-    YTPlaybackQuality quality = [YTPlayerView playbackQualityForString:rawQualityValue];
-    [levels addObject:[NSNumber numberWithInt:quality]];
-  }
-  return levels;
+    NSString *returnValue =
+    [self stringFromEvaluatingJavaScript:@"player.getAvailableQualityLevels().toString();"];
+    if(!returnValue) return nil;
+    
+    NSArray *rawQualityValues = [returnValue componentsSeparatedByString:@","];
+    NSMutableArray *levels = [[NSMutableArray alloc] init];
+    for (NSString *rawQualityValue in rawQualityValues) {
+        YTPlaybackQuality quality = [YTPlayerView playbackQualityForString:rawQualityValue];
+        [levels addObject:[NSNumber numberWithInt:quality]];
+    }
+    return levels;
 }
 
 - (BOOL)webView:(UIWebView *)webView
@@ -509,11 +501,11 @@ NSString static *const kYTPlayerEmbedUrlRegexPattern = @"^http(s)://(www.)youtub
 
 /**
  * Private method to handle "navigation" to a callback URL of the format
- * http://ytplayer/action?data=someData
+ * ytplayer://action?data=someData
  * This is how the UIWebView communicates with the containing Objective-C code.
  * Side effects of this method are that it calls methods on this class's delegate.
  *
- * @param url A URL of the format http://ytplayer/action.
+ * @param url A URL of the format ytplayer://action?data=value.
  */
 - (void)notifyDelegateOfYouTubeCallbackUrl: (NSURL *) url {
   NSString *action = url.host;
@@ -581,15 +573,24 @@ NSString static *const kYTPlayerEmbedUrlRegexPattern = @"^http(s)://(www.)youtub
   // UIWebView is the URL for the embed, which is of the format:
   //     http(s)://www.youtube.com/embed/[VIDEO ID]?[PARAMETERS]
   NSError *error = NULL;
-  NSRegularExpression *regex =
+  NSRegularExpression *ytRegex =
       [NSRegularExpression regularExpressionWithPattern:kYTPlayerEmbedUrlRegexPattern
                                                 options:NSRegularExpressionCaseInsensitive
                                                   error:&error];
-  NSTextCheckingResult *match =
-      [regex firstMatchInString:url.absoluteString
-                        options:0
-                          range:NSMakeRange(0, [url.absoluteString length])];
-  if (match) {
+  NSTextCheckingResult *ytMatch =
+      [ytRegex firstMatchInString:url.absoluteString
+                          options:0
+                            range:NSMakeRange(0, [url.absoluteString length])];
+    
+  NSRegularExpression *adRegex =
+  [NSRegularExpression regularExpressionWithPattern:kYTPlayerAdUrlRegexPattern
+                                            options:NSRegularExpressionCaseInsensitive
+                                              error:&error];
+  NSTextCheckingResult *adMatch =
+  [adRegex firstMatchInString:url.absoluteString
+                      options:0
+                        range:NSMakeRange(0, [url.absoluteString length])];
+  if (ytMatch || adMatch) {
     return YES;
   } else {
     [[UIApplication sharedApplication] openURL:url];
